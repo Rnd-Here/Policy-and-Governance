@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ReguWatch - Regulatory Intelligence Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Chosen Palette: Slate & Corporate Blue - Professional, trustworthy, clean. -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9; /* Slate 100 */
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+
+        /* Chart Container Styling Constraints */
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 100%; /* Constraints managed by grid/parent */
+            height: 300px;
+            max-height: 350px;
+        }
+
+        /* Loader Animation */
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #2563eb;
+            width: 20px;
+            height: 20px;
+            -webkit-animation: spin 1s linear infinite; /* Safari */
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+    <!-- Application Structure Plan: 
+         1. Sidebar Navigation: Categorizes the app into Dashboard (Overview), Regulatory Feed (Data), and Source Configuration (Settings).
+         2. Dashboard View: High-level metrics for quick assessment. Uses Charts to show volume and distribution.
+         3. Feed View: The core interactive element. A searchable, filterable table mimicking the output of the web scraper.
+         4. Simulation Logic: A "Sync" button now calls the Gemini API (via Google Search) to dynamically generate new, grounded updates, providing immediate feedback and understanding of the tool's purpose.
+    -->
+    <!-- Visualization & Content Choices:
+         1. Line Chart: "Update Frequency Trends" -> Goal: Change/Trend -> Shows activity spikes over the last 7 days -> Chart.js.
+         2. Doughnut Chart: "Source Distribution" -> Goal: Compare -> Visualizes which regulator is most active -> Chart.js.
+         3. Filterable List: "Latest Circulars" -> Goal: Organize/Inform -> The raw output of the scraper with metadata -> HTML/JS.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+</head>
+<body class="text-slate-800">
+
+    <div class="flex h-screen overflow-hidden">
+        <!-- Sidebar -->
+        <aside class="w-64 bg-white border-r border-slate-200 hidden md:flex flex-col z-10">
+            <div class="p-6 border-b border-slate-100">
+                <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <span class="text-2xl text-blue-600">●</span> ReguWatch
+                </h1>
+                <p class="text-xs text-slate-500 mt-1">Regulatory Intelligence Scraper</p>
+            </div>
+            
+            <nav class="flex-1 p-4 space-y-1">
+                <button onclick="app.navigate('dashboard')" id="nav-dashboard" class="nav-item w-full flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg bg-blue-50 text-blue-700">
+                    <span>📊</span>
+                    <span>Dashboard</span>
+                </button>
+                <button onclick="app.navigate('feed')" id="nav-feed" class="nav-item w-full flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg text-slate-600 hover:bg-slate-50">
+                    <span>📑</span>
+                    <span>Live Feed</span>
+                </button>
+                <button onclick="app.navigate('sources')" id="nav-sources" class="nav-item w-full flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg text-slate-600 hover:bg-slate-50">
+                    <span>🔌</span>
+                    <span>Source Config</span>
+                </button>
+            </nav>
+
+            <div class="p-4 border-t border-slate-100">
+                <div class="bg-slate-50 p-3 rounded-md">
+                    <p class="text-xs font-semibold text-slate-500 uppercase">System Status</p>
+                    <div class="flex items-center mt-2 space-x-2">
+                        <span id="system-status-dot" class="h-2 w-2 rounded-full bg-green-500"></span>
+                        <span id="system-status-text" class="text-xs text-slate-700">Scraper Idle</span>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-1">Last sync: <span id="last-sync-time">10 mins ago</span></p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 overflow-y-auto relative">
+            <!-- Header -->
+            <header class="bg-white border-b border-slate-200 sticky top-0 z-20 px-6 py-4 flex justify-between items-center">
+                <h2 id="page-title" class="text-xl font-semibold text-slate-800">Dashboard Overview</h2>
+                <div class="flex items-center space-x-4">
+                    <button onclick="app.simulateScrape()" id="scrape-btn" class="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">
+                        <span id="scrape-icon">↻</span>
+                        <span id="scrape-text">Run Scraper</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Content Views -->
+            <div id="content-area" class="p-6 md:p-8 max-w-7xl mx-auto">
+                
+                <!-- VIEW: DASHBOARD -->
+                <div id="view-dashboard" class="fade-in block">
+                    <!-- Context Header -->
+                    <div class="mb-8">
+                        <p class="text-slate-600 max-w-3xl leading-relaxed">
+                            Welcome to the Regulatory Intelligence Dashboard. This view aggregates data extracted from <strong>RBI, SEBI, IRDAI, PMLA, FATF, and the Ministry of Finance</strong>. 
+                            Use the charts below to understand the volume and nature of recent policy changes before diving into specific documents.
+                        </p>
+                    </div>
+
+                    <!-- Metrics Grid -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                            <p class="text-sm text-slate-500 font-medium">Total Updates</p>
+                            <p class="text-3xl font-bold text-slate-800 mt-2" id="metric-total">10</p>
+                            <span id="metric-total-delta" class="text-xs text-green-600 font-medium bg-green-50 px-2 py-1 rounded mt-2 inline-block">Initial Load</span>
+                        </div>
+                        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                            <p class="text-sm text-slate-500 font-medium">Critical Alerts</p>
+                            <p class="text-3xl font-bold text-red-600 mt-2" id="metric-critical">4</p>
+                            <span class="text-xs text-red-600 font-medium bg-red-50 px-2 py-1 rounded mt-2 inline-block">Requires Action</span>
+                        </div>
+                        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                            <p class="text-sm text-slate-500 font-medium">Most Active Source</p>
+                            <p class="text-3xl font-bold text-blue-600 mt-2" id="metric-active">SEBI</p>
+                            <span class="text-xs text-slate-500 font-medium mt-2 inline-block" id="metric-active-count">3 updates</span>
+                        </div>
+                        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                            <p class="text-sm text-slate-500 font-medium">PDFs Downloaded</p>
+                            <p class="text-3xl font-bold text-slate-800 mt-2" id="metric-pdfs">6</p>
+                            <span class="text-xs text-slate-500 font-medium mt-2 inline-block">Archived locally</span>
+                        </div>
+                    </div>
+
+                    <!-- Charts Section -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                        <!-- Chart 1: Volume over time -->
+                        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-lg font-semibold text-slate-800">Update Frequency (Last 7 Days)</h3>
+                                <div class="text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded">Volume</div>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="chart-volume"></canvas>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-4 text-center">Simulated trends show typical activity levels. Run the scraper to fetch current spikes.</p>
+                        </div>
+
+                        <!-- Chart 2: Source Distribution -->
+                        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-lg font-semibold text-slate-800">Updates by Regulator</h3>
+                                <div class="text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded">Distribution</div>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="chart-sources"></canvas>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-4 text-center">Distribution of content scraped from the six targeted regulatory bodies.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW: FEED -->
+                <div id="view-feed" class="hidden fade-in">
+                    <!-- Context Header -->
+                    <div class="mb-6">
+                        <p class="text-slate-600 max-w-4xl">
+                            This is the raw feed from your scraping targets, dynamically updated via the Gemini API's search grounding. 
+                            Use the filters to drill down into specific regulatory bodies or document types.
+                        </p>
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-wrap gap-4 items-center">
+                        <div class="flex-1 min-w-[200px]">
+                            <label class="block text-xs font-semibold text-slate-500 mb-1">Search</label>
+                            <input type="text" id="feed-search" placeholder="Search keywords (e.g., 'KYC', 'Margin')..." class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div class="w-full sm:w-auto">
+                            <label class="block text-xs font-semibold text-slate-500 mb-1">Regulator</label>
+                            <select id="filter-regulator" class="w-full sm:w-40 border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="All">All Sources</option>
+                                <option value="RBI">RBI</option>
+                                <option value="SEBI">SEBI</option>
+                                <option value="IRDAI">IRDAI</option>
+                                <option value="PMLA">PMLA</option>
+                                <option value="FATF">FATF</option>
+                                <option value="Ministry of Finance">Ministry of Finance</option>
+                            </select>
+                        </div>
+                        <div class="w-full sm:w-auto">
+                            <label class="block text-xs font-semibold text-slate-500 mb-1">Urgency</label>
+                            <select id="filter-urgency" class="w-full sm:w-40 border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="All">All Levels</option>
+                                <option value="High">High Priority</option>
+                                <option value="Medium">Medium</option>
+                                <option value="Low">Low</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Feed List -->
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm text-slate-600">
+                                <thead class="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200">
+                                    <tr>
+                                        <th class="px-6 py-4">Date</th>
+                                        <th class="px-6 py-4">Source</th>
+                                        <th class="px-6 py-4">Title / Subject</th>
+                                        <th class="px-6 py-4">Type</th>
+                                        <th class="px-6 py-4">Status</th>
+                                        <th class="px-6 py-4">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="feed-table-body" class="divide-y divide-slate-100">
+                                    <!-- Dynamic Content Injected Here -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="px-6 py-4 border-t border-slate-100 bg-slate-50 flex justify-center">
+                            <p class="text-sm text-slate-500">Showing <span id="record-count">0</span> records.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW: SOURCES CONFIG -->
+                <div id="view-sources" class="hidden fade-in">
+                     <div class="mb-8">
+                        <p class="text-slate-600 max-w-3xl leading-relaxed">
+                            These are the configured targets for the scraping engine. The Gemini API uses these sources via Google Search grounding to synthesize the feed data.
+                        </p>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Source Card Template -->
+                        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex justify-between items-start">
+                            <div>
+                                <div class="flex items-center space-x-2">
+                                    <h3 class="font-bold text-slate-800">RBI (Reserve Bank of India)</h3>
+                                    <span class="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">ACTIVE</span>
+                                </div>
+                                <p class="text-xs text-slate-500 mt-1">Target: Notifications & Master Directions</p>
+                                <p class="text-xs text-slate-400 mt-2">Frequency: <span class="text-slate-600 font-medium">Daily</span></p>
+                            </div>
+                            <button class="text-slate-400 hover:text-blue-600">⚙️</button>
+                        </div>
+
+                         <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex justify-between items-start">
+                            <div>
+                                <div class="flex items-center space-x-2">
+                                    <h3 class="font-bold text-slate-800">SEBI</h3>
+                                    <span class="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">ACTIVE</span>
+                                </div>
+                                <p class="text-xs text-slate-500 mt-1">Target: Circulars (HTML/PDF)</p>
+                                <p class="text-xs text-slate-400 mt-2">Frequency: <span class="text-slate-600 font-medium">Daily</span></p>
+                            </div>
+                            <button class="text-slate-400 hover:text-blue-600">⚙️</button>
+                        </div>
+
+                        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex justify-between items-start">
+                            <div>
+                                <div class="flex items-center space-x-2">
+                                    <h3 class="font-bold text-slate-800">IRDAI</h3>
+                                    <span class="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">ACTIVE</span>
+                                </div>
+                                <p class="text-xs text-slate-500 mt-1">Target: Regulatory Framework Updates</p>
+                                <p class="text-xs text-slate-400 mt-2">Frequency: <span class="text-slate-600 font-medium">Weekly</span></p>
+                            </div>
+                            <button class="text-slate-400 hover:text-blue-600">⚙️</button>
+                        </div>
+
+                        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex justify-between items-start">
+                            <div>
+                                <div class="flex items-center space-x-2">
+                                    <h3 class="font-bold text-slate-800">FATF</h3>
+                                    <span class="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">ACTIVE</span>
+                                </div>
+                                <p class="text-xs text-slate-500 mt-1">Target: Grey/Black List Updates</p>
+                                <p class="text-xs text-slate-400 mt-2">Frequency: <span class="text-slate-600 font-medium">Weekly</span></p>
+                            </div>
+                            <button class="text-slate-400 hover:text-blue-600">⚙️</button>
+                        </div>
+
+                        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex justify-between items-start">
+                            <div>
+                                <div class="flex items-center space-x-2">
+                                    <h3 class="font-bold text-slate-800">Ministry of Finance</h3>
+                                    <span class="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">ACTIVE</span>
+                                </div>
+                                <p class="text-xs text-slate-500 mt-1">Target: Press Releases & Gazettes</p>
+                                <p class="text-xs text-slate-400 mt-2">Frequency: <span class="text-slate-600 font-medium">Daily</span></p>
+                            </div>
+                            <button class="text-slate-400 hover:text-blue-600">⚙️</button>
+                        </div>
+                         <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex justify-between items-start">
+                            <div>
+                                <div class="flex items-center space-x-2">
+                                    <h3 class="font-bold text-slate-800">PMLA</h3>
+                                    <span class="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">ACTIVE</span>
+                                </div>
+                                <p class="text-xs text-slate-500 mt-1">Target: Acts and Statutory Rules</p>
+                                <p class="text-xs text-slate-400 mt-2">Frequency: <span class="text-slate-600 font-medium">Monthly</span></p>
+                            </div>
+                            <button class="text-slate-400 hover:text-blue-600">⚙️</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-slate-800 text-white px-6 py-4 rounded-lg shadow-lg transform translate-y-20 transition-transform duration-300 z-50">
+        <div class="flex items-center space-x-3">
+            <span class="text-green-400 text-xl" id="toast-icon">✓</span>
+            <div>
+                <h4 class="font-bold text-sm" id="toast-title">Scraping Complete</h4>
+                <p class="text-xs text-slate-300" id="toast-message">3 new documents found.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- API Configuration and Utilities ---
+        const API_KEY = "";
+        const BASE_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=" + API_KEY;
+
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        async function fetchWithRetry(url, options, maxRetries = 5) {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (response.status !== 429 && response.ok) {
+                        return response;
+                    }
+                    if (response.status === 429 && i < maxRetries - 1) {
+                        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                        await sleep(delay);
+                    } else {
+                        throw new Error(`API request failed with status ${response.status}: ${response.statusText}`);
+                    }
+                } catch (error) {
+                    if (i === maxRetries - 1) throw error;
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    await sleep(delay);
+                }
+            }
+        }
+
+        const JSON_SCHEMA = {
+            type: "ARRAY",
+            items: {
+                type: "OBJECT",
+                properties: {
+                    id: { type: "INTEGER", description: "A unique identifier for the document." },
+                    date: { type: "STRING", description: "The date of publication, e.g., 'YYYY-MM-DD'." },
+                    source: { type: "STRING", enum: ['RBI', 'SEBI', 'IRDAI', 'PMLA', 'FATF', 'Ministry of Finance'], description: "The regulatory body that issued the update." },
+                    title: { type: "STRING", description: "A concise and realistic title for the circular or notification." },
+                    type: { type: "STRING", enum: ['PDF Circular', 'HTML Notification', 'Press Release', 'Master Direction'], description: "The type of document." },
+                    urgency: { type: "STRING", enum: ['High', 'Medium', 'Low'], description: "The level of urgency for compliance/review." },
+                    link: { type: "STRING", description: "A placeholder link, e.g., 'https://[source].gov.in/circular/doc/[id]'" }
+                },
+                required: ["id", "date", "source", "title", "type", "urgency", "link"]
+            }
+        };
+
+        async function fetchGeneratedContent() {
+            const userQuery = "Find the latest regulatory circulars, notifications, and press releases published within the last few days from RBI, SEBI, IRDAI, FATF, PMLA, and the Ministry of Finance. Generate 3 to 5 distinct updates. For each update, use real information if possible, otherwise generate a realistic title, the originating source, the document type, and assign an appropriate urgency level. Ensure all 'id' values are greater than 1000 to be unique.";
+            
+            const systemPrompt = "You are a specialized Regulatory Intelligence System. Your task is to scrape the web for the latest updates from Indian financial regulators and international bodies (RBI, SEBI, IRDAI, PMLA, FATF, Ministry of Finance). You must return the findings strictly as a JSON array matching the provided schema. Do not include any introductory or concluding text, only the JSON.";
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                tools: [{ "google_search": {} }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: JSON_SCHEMA
+                }
+            };
+
+            const options = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            };
+
+            try {
+                const response = await fetchWithRetry(BASE_API_URL, options);
+                const result = await response.json();
+                
+                const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!jsonText) {
+                    throw new Error("API response structure is invalid or content is empty.");
+                }
+
+                return JSON.parse(jsonText);
+            } catch (error) {
+                console.error("API Call Error:", error);
+                throw new Error("Failed to fetch new regulatory data from the simulation engine.");
+            }
+        }
+
+        // --- Data Layer ---
+        // Initial Mock Data (will be replaced by live data)
+        let feedData = [
+            { id: 101, date: '2023-11-20', source: 'SEBI', title: 'Circular on Cyber Security & Cyber Resilience Framework for Stock Brokers', type: 'PDF Circular', urgency: 'High', link: '#' },
+            { id: 102, date: '2023-11-19', source: 'RBI', title: 'Master Direction - Reserve Bank of India (NBFC - Scale Based Regulation)', type: 'Master Direction', urgency: 'High', link: '#' },
+            { id: 103, date: '2023-11-18', source: 'Ministry of Finance', title: 'Notification regarding GST rate changes for online gaming', type: 'HTML Notification', urgency: 'Medium', link: '#' },
+            { id: 104, date: '2023-11-17', source: 'IRDAI', title: 'Exposure Draft on Insurance Products Regulations 2023', type: 'PDF Circular', urgency: 'Medium', link: '#' },
+            { id: 105, date: '2023-11-16', source: 'FATF', title: 'Public Statement on High-Risk Jurisdictions subject to a Call for Action', type: 'Press Release', urgency: 'High', link: '#' },
+            { id: 106, date: '2023-11-15', source: 'PMLA', title: 'Amendment to Prevention of Money-laundering (Maintenance of Records) Rules', type: 'PDF Circular', urgency: 'High', link: '#' },
+            { id: 107, date: '2023-11-14', source: 'SEBI', title: 'Simplify procedural requirements for trading accounts', type: 'HTML Notification', urgency: 'Low', link: '#' },
+            { id: 108, date: '2023-11-13', source: 'RBI', title: 'Withdrawal of Rs 2000 denomination banknotes - Status', type: 'Press Release', urgency: 'Low', link: '#' },
+            { id: 109, date: '2023-11-12', source: 'IRDAI', title: 'Clarification on surrender value norms', type: 'PDF Circular', urgency: 'Medium', link: '#' },
+            { id: 110, date: '2023-11-11', source: 'SEBI', title: 'Extension of timeline for verification of market rumours by listed entities', type: 'PDF Circular', urgency: 'Medium', link: '#' },
+        ];
+
+
+        // --- Application Logic ---
+        const app = {
+            state: {
+                currentView: 'dashboard',
+                filterSource: 'All',
+                filterUrgency: 'All',
+                filterSearch: '',
+                data: [...feedData],
+                charts: {}
+            },
+
+            init() {
+                this.renderFeed();
+                this.updateMetrics();
+                this.initCharts();
+                this.setupListeners();
+                this.updateLastSync();
+            },
+
+            navigate(viewName) {
+                document.getElementById('view-dashboard').classList.add('hidden');
+                document.getElementById('view-feed').classList.add('hidden');
+                document.getElementById('view-sources').classList.add('hidden');
+                
+                document.getElementById(`view-${viewName}`).classList.remove('hidden');
+                
+                document.querySelectorAll('.nav-item').forEach(el => {
+                    el.classList.remove('bg-blue-50', 'text-blue-700');
+                    el.classList.add('text-slate-600', 'hover:bg-slate-50');
+                });
+                
+                const activeNav = document.getElementById(`nav-${viewName}`);
+                activeNav.classList.remove('text-slate-600', 'hover:bg-slate-50');
+                activeNav.classList.add('bg-blue-50', 'text-blue-700');
+
+                const titles = {
+                    'dashboard': 'Dashboard Overview',
+                    'feed': 'Live Regulatory Feed',
+                    'sources': 'Scraping Configuration'
+                };
+                document.getElementById('page-title').innerText = titles[viewName];
+
+                this.state.currentView = viewName;
+            },
+
+            setupListeners() {
+                document.getElementById('filter-regulator').addEventListener('change', (e) => {
+                    this.state.filterSource = e.target.value;
+                    this.renderFeed();
+                });
+                document.getElementById('filter-urgency').addEventListener('change', (e) => {
+                    this.state.filterUrgency = e.target.value;
+                    this.renderFeed();
+                });
+                document.getElementById('feed-search').addEventListener('input', (e) => {
+                    this.state.filterSearch = e.target.value.toLowerCase();
+                    this.renderFeed();
+                });
+            },
+
+            renderFeed() {
+                const tbody = document.getElementById('feed-table-body');
+                tbody.innerHTML = '';
+
+                const filtered = this.state.data.filter(item => {
+                    const matchSource = this.state.filterSource === 'All' || item.source === this.state.filterSource;
+                    const matchUrgency = this.state.filterUrgency === 'All' || item.urgency === this.state.filterUrgency;
+                    const matchSearch = item.title.toLowerCase().includes(this.state.filterSearch) || 
+                                      item.source.toLowerCase().includes(this.state.filterSearch);
+                    return matchSource && matchUrgency && matchSearch;
+                });
+                
+                document.getElementById('record-count').innerText = filtered.length;
+
+                if (filtered.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="6" class="px-6 py-8 text-center text-slate-400">No documents found matching criteria.</td></tr>`;
+                    return;
+                }
+
+                filtered.sort((a, b) => new Date(b.date) - new Date(a.date)); // Sort by date descending
+
+                filtered.forEach(item => {
+                    const urgencyClass = {
+                        'High': 'bg-red-100 text-red-700',
+                        'Medium': 'bg-orange-100 text-orange-700',
+                        'Low': 'bg-slate-100 text-slate-600'
+                    }[item.urgency];
+
+                    const row = `
+                        <tr class="hover:bg-slate-50 transition-colors border-b border-slate-50 group">
+                            <td class="px-6 py-4 whitespace-nowrap">${item.date}</td>
+                            <td class="px-6 py-4 whitespace-nowrap font-medium text-slate-700">${item.source}</td>
+                            <td class="px-6 py-4 max-w-xs truncate" title="${item.title}">${item.title}</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="flex items-center text-xs bg-white border border-slate-200 px-2 py-1 rounded shadow-sm w-fit">
+                                    ${item.type.includes('PDF') ? '📄' : item.type.includes('HTML') ? '🌐' : '📰'} ${item.type}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="text-xs font-bold px-2 py-1 rounded-full ${urgencyClass}">${item.urgency}</span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <a href="${item.link}" target="_blank" class="text-blue-600 hover:text-blue-800 font-medium text-xs border border-blue-200 hover:bg-blue-50 px-3 py-1.5 rounded transition-colors">View</a>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.innerHTML += row;
+                });
+            },
+
+            async simulateScrape() {
+                const btn = document.getElementById('scrape-btn');
+                const icon = document.getElementById('scrape-icon');
+                const text = document.getElementById('scrape-text');
+                const originalText = text.innerText;
+                const originalIcon = icon.innerHTML;
+
+                // Set Loading State
+                btn.classList.add('opacity-75', 'cursor-not-allowed');
+                btn.setAttribute('disabled', 'true');
+                icon.innerHTML = '<div class="loader"></div>';
+                text.innerText = 'Scanning Sources...';
+                document.getElementById('system-status-dot').classList.remove('bg-green-500', 'bg-red-500');
+                document.getElementById('system-status-dot').classList.add('bg-blue-500');
+                document.getElementById('system-status-text').innerText = 'Scraper Running...';
+
+                try {
+                    const newItems = await fetchGeneratedContent();
+                    const newCount = Array.isArray(newItems) ? newItems.length : 0;
+                    
+                    if (newCount > 0) {
+                        this.state.data = [...newItems, ...this.state.data]; 
+                        this.updateMetrics(newCount);
+                        this.updateCharts(newItems);
+                        this.renderFeed();
+                        this.showToast('Scraping Complete', `${newCount} new regulatory documents found.`, 'success');
+                    } else {
+                        this.showToast('Scraping Complete', 'No new updates found.', 'warning');
+                    }
+
+                } catch (error) {
+                    console.error("Scraping Simulation Failed:", error);
+                    this.showToast('Scraping Error', 'Failed to fetch data from simulation engine. See console for details.', 'error');
+                }
+
+                // Reset Button
+                btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                btn.removeAttribute('disabled');
+                icon.innerHTML = originalIcon;
+                text.innerText = originalText;
+                document.getElementById('system-status-dot').classList.remove('bg-blue-500');
+                document.getElementById('system-status-dot').classList.add('bg-green-500');
+                document.getElementById('system-status-text').innerText = 'Scraper Idle';
+                this.updateLastSync();
+            },
+
+            updateMetrics(newCount = 0) {
+                const totalEl = document.getElementById('metric-total');
+                totalEl.innerText = this.state.data.length;
+
+                const criticalCount = this.state.data.filter(i => i.urgency === 'High').length;
+                document.getElementById('metric-critical').innerText = criticalCount;
+
+                const pdfCount = this.state.data.filter(i => i.type.includes('PDF')).length;
+                document.getElementById('metric-pdfs').innerText = pdfCount;
+
+                if (newCount > 0) {
+                    const deltaEl = document.getElementById('metric-total-delta');
+                    deltaEl.innerText = `+${newCount} New Updates`;
+                    deltaEl.classList.remove('bg-green-50', 'bg-red-50');
+                    deltaEl.classList.add('bg-blue-100', 'text-blue-700');
+                }
+                
+                const sourceCounts = this.state.data.reduce((acc, item) => {
+                    acc[item.source] = (acc[item.source] || 0) + 1;
+                    return acc;
+                }, {});
+
+                let mostActiveSource = 'N/A';
+                let maxCount = 0;
+                for (const source in sourceCounts) {
+                    if (sourceCounts[source] > maxCount) {
+                        maxCount = sourceCounts[source];
+                        mostActiveSource = source;
+                    }
+                }
+                document.getElementById('metric-active').innerText = mostActiveSource;
+                document.getElementById('metric-active-count').innerText = `${maxCount} updates`;
+            },
+
+            updateLastSync() {
+                const now = new Date();
+                const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                document.getElementById('last-sync-time').innerText = "Just now (" + timeString + ")";
+            },
+
+            showToast(title, msg, type) {
+                const toast = document.getElementById('toast');
+                const iconEl = document.getElementById('toast-icon');
+                const titleEl = document.getElementById('toast-title');
+                const msgEl = document.getElementById('toast-message');
+
+                let icon;
+                let bgColor;
+                if (type === 'success') {
+                    icon = '✓';
+                    bgColor = 'bg-slate-800';
+                } else if (type === 'error') {
+                    icon = '✖';
+                    bgColor = 'bg-red-700';
+                } else {
+                    icon = '!';
+                    bgColor = 'bg-orange-600';
+                }
+
+                toast.classList.remove('bg-slate-800', 'bg-red-700', 'bg-orange-600');
+                toast.classList.add(bgColor);
+                iconEl.innerText = icon;
+                titleEl.innerText = title;
+                msgEl.innerText = msg;
+                
+                toast.classList.remove('translate-y-20');
+                
+                setTimeout(() => {
+                    toast.classList.add('translate-y-20');
+                }, 4000);
+            },
+
+            initCharts() {
+                // Initial mock data for charts
+                const initialSources = this.state.data.map(i => i.source);
+                const sourceCounts = initialSources.reduce((acc, source) => {
+                    acc[source] = (acc[source] || 0) + 1;
+                    return acc;
+                }, {});
+                const labels = Object.keys(sourceCounts);
+                const data = Object.values(sourceCounts);
+
+                // Chart 1: Volume (Line)
+                const ctxVolume = document.getElementById('chart-volume').getContext('2d');
+                this.state.charts.volume = new Chart(ctxVolume, {
+                    type: 'line',
+                    data: {
+                        labels: ['D-6', 'D-5', 'D-4', 'D-3', 'D-2', 'D-1', 'Today'],
+                        datasets: [{
+                            label: 'Notifications',
+                            data: [1, 2, 2, 1, 2, 0, 2], // Initial distribution
+                            borderColor: '#2563eb',
+                            backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                            fill: true,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: { y: { beginAtZero: true, suggestedMax: 10 } }
+                    }
+                });
+
+                // Chart 2: Sources (Doughnut)
+                const ctxSources = document.getElementById('chart-sources').getContext('2d');
+                this.state.charts.sources = new Chart(ctxSources, {
+                    type: 'doughnut',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: data,
+                            backgroundColor: ['#1e40af', '#3b82f6', '#93c5fd', '#60a5fa', '#374151', '#94a3b8'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'right' }
+                        }
+                    }
+                });
+            },
+
+            updateCharts(newItems = []) {
+                // Update Volume Chart (Simulated activity)
+                const volChart = this.state.charts.volume;
+                const todayIndex = volChart.data.labels.length - 1;
+                volChart.data.datasets[0].data[todayIndex] += newItems.length; 
+                volChart.update();
+
+                // Update Sources Chart
+                const sourceCounts = this.state.data.reduce((acc, item) => {
+                    acc[item.source] = (acc[item.source] || 0) + 1;
+                    return acc;
+                }, {});
+                
+                const labels = Object.keys(sourceCounts);
+                const data = Object.values(sourceCounts);
+
+                const sourceChart = this.state.charts.sources;
+                sourceChart.data.labels = labels;
+                sourceChart.data.datasets[0].data = data;
+                sourceChart.update();
+            }
+        };
+
+        // Initialize App
+        window.onload = () => app.init();
+    </script>
+</body>
+</html>
